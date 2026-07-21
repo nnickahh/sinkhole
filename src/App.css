@@ -1,0 +1,35 @@
+.app-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.35) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+.power-orb::before {
+  content: "";
+  position: absolute;
+  inset: -18px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.status-pulse {
+  box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55);
+  animation: pulse-ring 2s infinite;
+}
+
+@keyframes pulse-ring {
+  70% {
+    box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+}
+
+@media (max-height: 760px) and (min-width: 1024px) {
+  .power-orb {
+    height: 11rem;
+    width: 11rem;
+  }
+}
