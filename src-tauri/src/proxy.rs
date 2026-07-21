@@ -51,7 +51,7 @@ async fn handle_connection(mut client: TcpStream, engine: AdblockEngine) -> io::
     }
 
     if let Some(category) = engine.classify_host(&parsed.host) {
-        engine.record_block(category);
+        engine.record_block(category, &parsed.host);
         return write_response(&mut client, "204 No Content").await;
     }
 

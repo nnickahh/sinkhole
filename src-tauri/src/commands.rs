@@ -116,6 +116,11 @@ pub fn get_stats(state: State<'_, AppState>) -> AdblockStats {
 }
 
 #[tauri::command]
+pub fn clear_activity_log(state: State<'_, AppState>) -> usize {
+    state.engine.clear_recent_blocks()
+}
+
+#[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> AppSettings {
     state.settings_snapshot()
 }

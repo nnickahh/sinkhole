@@ -114,6 +114,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::toggle_adblocker,
             commands::get_stats,
+            commands::clear_activity_log,
             commands::get_settings,
             commands::set_system_proxy,
             commands::set_quick_protection,

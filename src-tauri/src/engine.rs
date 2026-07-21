@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
@@ -40,6 +40,8 @@ const FALLBACK_TELEMETRY_RULES: &str = r#"
 ||settings-win.data.microsoft.com^
 ||watson.telemetry.microsoft.com^
 "#;
+
+const RECENT_BLOCK_LIMIT: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -181,7 +183,25 @@ struct EngineInner {
     last_request_millis: AtomicU64,
     active_lists: AtomicUsize,
     proxy_running: AtomicBool,
+    recent_blocks: RwLock<VecDeque<BlockedEventRecord>>,
     started_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct BlockedEventRecord {
+    category: RuleCategory,
+    host: String,
+    count: u64,
+    last_seen: Instant,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockedEvent {
+    pub category: RuleCategory,
+    pub host: String,
+    pub count: u64,
+    pub age_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,6 +225,7 @@ pub struct AdblockStats {
     pub last_request_age_seconds: Option<u64>,
     pub uptime_seconds: u64,
     pub bandwidth_saved_bytes: u64,
+    pub recent_blocks: Vec<BlockedEvent>,
 }
 
 impl AdblockEngine {
@@ -222,6 +243,7 @@ impl AdblockEngine {
                 last_request_millis: AtomicU64::new(0),
                 active_lists: AtomicUsize::new(3),
                 proxy_running: AtomicBool::new(false),
+                recent_blocks: RwLock::new(VecDeque::with_capacity(RECENT_BLOCK_LIMIT)),
                 started_at: Instant::now(),
             }),
         };
@@ -319,7 +341,7 @@ impl AdblockEngine {
             .store(elapsed_millis.saturating_add(1), Ordering::Relaxed);
     }
 
-    pub fn record_block(&self, category: RuleCategory) {
+    pub fn record_block(&self, category: RuleCategory, host: &str) {
         let counter = match category {
             RuleCategory::Ad => &self.inner.blocked_ads,
             RuleCategory::Tracker => &self.inner.blocked_trackers,
@@ -327,6 +349,41 @@ impl AdblockEngine {
             RuleCategory::Custom => &self.inner.blocked_custom,
         };
         counter.fetch_add(1, Ordering::Relaxed);
+
+        let Some(host) = normalize_domain(host) else {
+            return;
+        };
+        let mut recent_blocks = self
+            .inner
+            .recent_blocks
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let existing_index = recent_blocks
+            .iter()
+            .position(|event| event.category == category && event.host == host);
+        let mut event = existing_index
+            .and_then(|index| recent_blocks.remove(index))
+            .unwrap_or_else(|| BlockedEventRecord {
+                category,
+                host,
+                count: 0,
+                last_seen: Instant::now(),
+            });
+        event.count = event.count.saturating_add(1);
+        event.last_seen = Instant::now();
+        recent_blocks.push_front(event);
+        recent_blocks.truncate(RECENT_BLOCK_LIMIT);
+    }
+
+    pub fn clear_recent_blocks(&self) -> usize {
+        let mut recent_blocks = self
+            .inner
+            .recent_blocks
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cleared = recent_blocks.len();
+        recent_blocks.clear();
+        cleared
     }
 
     pub fn stats(&self) -> AdblockStats {
@@ -353,6 +410,19 @@ impl AdblockEngine {
         let last_request_millis = self.inner.last_request_millis.load(Ordering::Relaxed);
         let last_request_age_seconds = (last_request_millis > 0)
             .then(|| elapsed_millis.saturating_sub(last_request_millis.saturating_sub(1)) / 1_000);
+        let recent_blocks = self
+            .inner
+            .recent_blocks
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .map(|event| BlockedEvent {
+                category: event.category,
+                host: event.host.clone(),
+                count: event.count,
+                age_seconds: event.last_seen.elapsed().as_secs(),
+            })
+            .collect();
 
         AdblockStats {
             total_blocked,
@@ -373,6 +443,7 @@ impl AdblockEngine {
             last_request_age_seconds,
             uptime_seconds: self.inner.started_at.elapsed().as_secs(),
             bandwidth_saved_bytes: total_blocked.saturating_mul(42_000),
+            recent_blocks,
         }
     }
 }
@@ -561,14 +632,36 @@ mod tests {
     fn requests_and_block_categories_are_counted_separately() {
         let engine = AdblockEngine::new(true, &[]);
         engine.record_request();
-        engine.record_block(RuleCategory::Tracker);
-        engine.record_block(RuleCategory::Telemetry);
+        engine.record_block(RuleCategory::Tracker, "analytics.example.com");
+        engine.record_block(RuleCategory::Telemetry, "telemetry.example.com");
         let stats = engine.stats();
         assert_eq!(stats.requests_processed, 1);
         assert_eq!(stats.total_blocked, 2);
         assert_eq!(stats.blocked_trackers, 1);
         assert_eq!(stats.blocked_telemetry, 1);
         assert!(stats.last_request_age_seconds.is_some());
+        assert_eq!(stats.recent_blocks.len(), 2);
+        assert_eq!(stats.recent_blocks[0].host, "telemetry.example.com");
+    }
+
+    #[test]
+    fn recent_blocks_are_bounded_deduplicated_and_clearable() {
+        let engine = AdblockEngine::new(true, &[]);
+        engine.record_block(RuleCategory::Tracker, "repeat.example.com");
+        engine.record_block(RuleCategory::Tracker, "repeat.example.com");
+        for index in 0..RECENT_BLOCK_LIMIT + 5 {
+            engine.record_block(RuleCategory::Ad, &format!("ad-{index}.example.com"));
+        }
+
+        let stats = engine.stats();
+        assert_eq!(stats.recent_blocks.len(), RECENT_BLOCK_LIMIT);
+        assert_eq!(stats.recent_blocks[0].host, "ad-54.example.com");
+        assert!(!stats
+            .recent_blocks
+            .iter()
+            .any(|event| event.host == "repeat.example.com"));
+        assert_eq!(engine.clear_recent_blocks(), RECENT_BLOCK_LIMIT);
+        assert!(engine.stats().recent_blocks.is_empty());
     }
 
     #[test]

@@ -31,6 +31,7 @@ const EMPTY_STATS: AdblockStats = {
   lastRequestAgeSeconds: null,
   uptimeSeconds: 0,
   bandwidthSavedBytes: 0,
+  recentBlocks: [],
 };
 
 const EMPTY_SETTINGS: AppSettings = {

@@ -13,6 +13,7 @@ Built for OpenAI Build Week with Tauri v2, Rust, React, TypeScript, and Codex/GP
 - EasyPrivacy blocks common analytics and tracking hosts.
 - HaGeZi's native Windows/Office list blocks known telemetry endpoints.
 - Live counters separate ads, trackers, telemetry, and custom rules.
+- A bounded, memory-only activity view shows recently blocked hostnames without storing full URLs or request contents.
 - A local `http://sinkhole.test` page proves that the browser is actually connected.
 - HTTPS filtering happens at the hostname boundary without installing a root certificate or decrypting content.
 - Protection, lists, and allowed domains persist across launches.
@@ -65,6 +66,14 @@ python scripts/stress_test.py
 ```
 
 The harness first requires a `204` sinkhole response from every category. It aborts before the load phase if any test destination would be forwarded upstream. Use `--requests-per-category` and `--concurrency` to increase or reduce the load.
+
+Also verify that representative ad-block test pages still return a real response through the proxy:
+
+```powershell
+python scripts/site_compatibility.py
+```
+
+This is a page-load smoke test, not a promise of a perfect score. Browser-extension-only checks such as cosmetic element removal, scriptlets, and path-level HTTPS filtering remain outside the hostname proxy's scope.
 
 ## OpenAI Build Week submission
 

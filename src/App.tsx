@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -19,13 +19,14 @@ import {
   Settings as SettingsIcon,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Unplug,
   Wifi,
   Zap,
 } from "lucide-react";
 import { Settings } from "./components/Settings";
 import { QuickPanel } from "./components/QuickPanel";
-import type { AdblockStats, AppSettings, LinkInspection } from "./types";
+import type { AdblockStats, AppSettings, LinkInspection, RuleCategory } from "./types";
 import "./App.css";
 
 const DEFAULT_LISTS = [
@@ -53,6 +54,7 @@ const EMPTY_STATS: AdblockStats = {
   lastRequestAgeSeconds: null,
   uptimeSeconds: 0,
   bandwidthSavedBytes: 0,
+  recentBlocks: [],
 };
 
 const EMPTY_SETTINGS: AppSettings = {
@@ -67,6 +69,8 @@ const TEST_TARGETS = [
   { label: "Tracker", url: "https://www.google-analytics.com/collect" },
   { label: "Telemetry", url: "https://vortex.data.microsoft.com/collect" },
 ];
+
+const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
@@ -91,6 +95,102 @@ function formatUptime(seconds: number) {
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
+function formatAge(seconds: number) {
+  if (seconds < 5) return "now";
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  return `${Math.floor(seconds / 3600)}h ago`;
+}
+
+function categoryTone(category: RuleCategory) {
+  return {
+    ad: "border-violet-300/20 bg-violet-400/10 text-violet-200",
+    tracker: "border-cyan-300/20 bg-cyan-400/10 text-cyan-200",
+    telemetry: "border-rose-300/20 bg-rose-400/10 text-rose-200",
+    custom: "border-amber-300/20 bg-amber-400/10 text-amber-200",
+  }[category];
+}
+
+function useOrbitDeceleration(active: boolean) {
+  const ringRef = useRef<HTMLSpanElement>(null);
+  const animationRef = useRef<Animation | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const playbackRateRef = useRef(active ? 1 : 0);
+  const activeRef = useRef(active);
+  const reducedMotionRef = useRef(false);
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
+  useEffect(() => {
+    const ring = ringRef.current;
+    if (!ring) return;
+
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const animation = ring.animate(
+      [{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }],
+      { duration: 9000, iterations: Infinity, easing: "linear" },
+    );
+    animationRef.current = animation;
+
+    const applyMotionPreference = () => {
+      reducedMotionRef.current = motionPreference.matches;
+      if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+      const rate = motionPreference.matches || !activeRef.current ? 0 : 1;
+      playbackRateRef.current = rate;
+      animation.updatePlaybackRate(rate || 0.001);
+      if (rate === 0) animation.pause();
+      else animation.play();
+    };
+
+    applyMotionPreference();
+    motionPreference.addEventListener("change", applyMotionPreference);
+    return () => {
+      motionPreference.removeEventListener("change", applyMotionPreference);
+      if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+      animation.cancel();
+      animationRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const animation = animationRef.current;
+    if (!animation || reducedMotionRef.current) return;
+    if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+
+    const startRate = playbackRateRef.current;
+    const targetRate = active ? 1 : 0;
+    const duration = active ? 420 : 1250;
+    const startedAt = performance.now();
+    if (targetRate > 0) animation.play();
+
+    const step = (now: number) => {
+      const progress = Math.min((now - startedAt) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const nextRate = startRate + (targetRate - startRate) * eased;
+      playbackRateRef.current = nextRate;
+      animation.updatePlaybackRate(Math.max(nextRate, 0.001));
+
+      if (progress < 1) {
+        frameRef.current = window.requestAnimationFrame(step);
+      } else {
+        playbackRateRef.current = targetRate;
+        animation.updatePlaybackRate(targetRate || 0.001);
+        if (targetRate === 0) animation.pause();
+        frameRef.current = null;
+      }
+    };
+
+    frameRef.current = window.requestAnimationFrame(step);
+    return () => {
+      if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+    };
+  }, [active]);
+
+  return ringRef;
+}
+
 function Dashboard() {
   const [stats, setStats] = useState(EMPTY_STATS);
   const [settings, setSettings] = useState(EMPTY_SETTINGS);
@@ -101,6 +201,8 @@ function Dashboard() {
   const [testUrl, setTestUrl] = useState(TEST_TARGETS[0].url);
   const [testResult, setTestResult] = useState<LinkInspection | null>(null);
   const [copied, setCopied] = useState(false);
+  const [clearingLog, setClearingLog] = useState(false);
+  const ringRef = useOrbitDeceleration(stats.protectionEnabled);
 
   const refreshStats = useCallback(async () => {
     try {
@@ -111,6 +213,7 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
+    if (!IS_TAURI) return;
     void Promise.all([
       refreshStats(),
       invoke<AppSettings>("get_settings").then(setSettings),
@@ -197,6 +300,19 @@ function Dashboard() {
     window.setTimeout(() => setCopied(false), 1500);
   };
 
+  const clearActivityLog = async () => {
+    setClearingLog(true);
+    setError(null);
+    try {
+      await invoke<number>("clear_activity_log");
+      await refreshStats();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setClearingLog(false);
+    }
+  };
+
   const connected = settings.systemProxyEnabled && stats.proxyRunning;
   const observed = connected && stats.requestsProcessed > 0;
   const active = stats.protectionEnabled;
@@ -209,7 +325,7 @@ function Dashboard() {
         : "CONNECTED — WAITING FOR TRAFFIC";
 
   return (
-    <main className="cosmos relative min-h-screen overflow-hidden text-slate-100">
+    <main className="cosmos relative min-h-screen overflow-x-hidden text-slate-100">
       <div className="stars pointer-events-none absolute inset-0" />
       <div className="nebula pointer-events-none absolute inset-0" />
 
@@ -242,7 +358,7 @@ function Dashboard() {
         </header>
 
         {error && (
-          <div className="mt-5 flex items-center justify-between rounded-xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+          <div role="alert" className="mt-5 flex items-center justify-between rounded-xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
             <span className="truncate">{error}</span>
             <button className="ml-4 text-rose-300 hover:text-white" onClick={() => setError(null)}>Dismiss</button>
           </div>
@@ -257,13 +373,15 @@ function Dashboard() {
 
             <button
               aria-label={active ? "Disable filtering" : "Enable filtering"}
-              className={`event-horizon group relative grid h-52 w-52 place-items-center rounded-full transition-all duration-500 ${active ? "is-active" : "is-paused"} ${busy ? "scale-95 opacity-70" : "hover:scale-[1.02]"}`}
+              aria-pressed={active}
+              aria-busy={busy}
+              className={`event-horizon group relative grid h-52 w-52 place-items-center rounded-full ${active ? "is-active" : "is-paused"} ${busy ? "is-busy" : ""}`}
               disabled={busy}
               onClick={toggleProtection}
             >
-              <span className="accretion-ring absolute inset-2 rounded-full" />
+              <span ref={ringRef} aria-hidden="true" className="accretion-ring absolute inset-2 rounded-full" />
               <span className="black-hole grid h-28 w-28 place-items-center rounded-full border border-violet-200/20 text-violet-100">
-                {busy ? <RefreshCw className="animate-spin" size={36} /> : <Power size={38} strokeWidth={1.6} />}
+                {busy ? <RefreshCw aria-hidden="true" className="animate-spin" size={36} /> : <Power aria-hidden="true" size={38} strokeWidth={1.6} />}
               </span>
             </button>
 
@@ -328,6 +446,46 @@ function Dashboard() {
             </div>
 
             <article className="cosmic-card rounded-2xl p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-white">
+                    <Activity aria-hidden="true" className="text-cyan-300" size={17} /> Local activity
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">Hostnames only · memory only · newest first</p>
+                </div>
+                <button
+                  aria-label="Clear local activity log"
+                  className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.035] px-2.5 py-1.5 text-[11px] text-slate-400 hover:border-rose-300/30 hover:text-rose-200 disabled:opacity-40"
+                  disabled={clearingLog || stats.recentBlocks.length === 0}
+                  onClick={() => void clearActivityLog()}
+                >
+                  <Trash2 aria-hidden="true" size={12} /> {clearingLog ? "Clearing" : "Clear"}
+                </button>
+              </div>
+
+              {stats.recentBlocks.length > 0 ? (
+                <ol aria-label="Recently blocked hostnames" className="activity-list mt-4 max-h-44 space-y-1.5 overflow-y-auto pr-1">
+                  {stats.recentBlocks.map((event) => (
+                    <li key={`${event.category}:${event.host}`} className="activity-row grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-xl border border-white/[0.06] bg-black/15 px-3 py-2">
+                      <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${categoryTone(event.category)}`}>
+                        {event.category}
+                      </span>
+                      <span className="truncate font-mono text-[11px] text-slate-300" title={event.host}>{event.host}</span>
+                      <span className="flex items-center gap-2 text-[10px] text-slate-600">
+                        {event.count > 1 && <span aria-label={`${event.count} blocks`}>×{formatNumber(event.count)}</span>}
+                        <time>{formatAge(event.ageSeconds)}</time>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <div className="mt-4 rounded-xl border border-dashed border-white/10 px-4 py-5 text-center text-xs text-slate-600">
+                  Blocked destinations will appear here without URLs, payloads, or browsing history.
+                </div>
+              )}
+            </article>
+
+            <article className="cosmic-card rounded-2xl p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2 text-sm font-medium text-white"><Sparkles className="text-violet-300" size={17} /> Rule scanner</div>
@@ -350,7 +508,7 @@ function Dashboard() {
                 <button className="rounded-xl bg-white px-5 text-sm font-semibold text-slate-950 transition hover:bg-violet-100" onClick={() => void checkLink()}>Scan</button>
               </div>
               {testResult && (
-                <p className={`mt-3 flex items-center gap-2 text-xs ${testResult.blocked ? "text-violet-200" : "text-slate-400"}`}>
+                <p role="status" className={`mt-3 flex items-center gap-2 text-xs ${testResult.blocked ? "text-violet-200" : "text-slate-400"}`}>
                   {testResult.blocked ? <Activity size={14} /> : <Check size={14} />}
                   {testResult.blocked ? `Blocked as ${testResult.category}` : "Allowed by current settings"}
                 </p>
@@ -392,7 +550,7 @@ function Metric({ icon, label, value, detail }: { icon: React.ReactNode; label: 
 }
 
 function App() {
-  return getCurrentWindow().label === "quick" ? <QuickPanel /> : <Dashboard />;
+  return IS_TAURI && getCurrentWindow().label === "quick" ? <QuickPanel /> : <Dashboard />;
 }
 
 export default App;

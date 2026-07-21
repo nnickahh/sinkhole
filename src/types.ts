@@ -17,6 +17,7 @@ export interface AdblockStats {
   lastRequestAgeSeconds: number | null;
   uptimeSeconds: number;
   bandwidthSavedBytes: number;
+  recentBlocks: BlockedEvent[];
 }
 
 export interface AppSettings {
@@ -27,6 +28,13 @@ export interface AppSettings {
 }
 
 export type RuleCategory = "ad" | "tracker" | "telemetry" | "custom";
+
+export interface BlockedEvent {
+  category: RuleCategory;
+  host: string;
+  count: number;
+  ageSeconds: number;
+}
 
 export interface LinkInspection {
   blocked: boolean;

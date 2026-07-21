@@ -57,8 +57,12 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "SinkHole stress test failed with exit code $LASTEXITCODE."
             }
+            python scripts/site_compatibility.py
+            if ($LASTEXITCODE -ne 0) {
+              throw "SinkHole site compatibility test failed with exit code $LASTEXITCODE."
+            }
             if ($app.HasExited) {
-              throw "SinkHole exited during stress testing with code $($app.ExitCode)."
+              throw "SinkHole exited during packaged proxy testing with code $($app.ExitCode)."
             }
           } finally {
             if (-not $app.HasExited) {

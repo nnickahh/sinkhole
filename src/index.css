@@ -34,7 +34,13 @@ button {
 }
 
 button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid rgba(103, 232, 249, 0.9);
+  outline-offset: 3px;
 }
 
 ::-webkit-scrollbar {
