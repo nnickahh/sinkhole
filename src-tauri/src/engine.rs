@@ -295,10 +295,6 @@ impl AdblockEngine {
         self.classify_host(&host)
     }
 
-    pub fn check_host(&self, host: &str) -> bool {
-        self.classify_host(host).is_some()
-    }
-
     pub fn classify_host(&self, host: &str) -> Option<RuleCategory> {
         if !self.is_enabled() {
             return None;
