@@ -58,6 +58,14 @@ pnpm tauri build
 
 The live list test requires internet access. Installers are written below `src-tauri/target/release/bundle/`.
 
+With SinkHole running, exercise the packaged proxy with 3,000 concurrent-safe ad, tracker, and telemetry requests:
+
+```powershell
+python scripts/stress_test.py
+```
+
+The harness first requires a `204` sinkhole response from every category. It aborts before the load phase if any test destination would be forwarded upstream. Use `--requests-per-category` and `--concurrency` to increase or reduce the load.
+
 ## OpenAI Build Week submission
 
 Suggested track: **Apps for Your Life**.
