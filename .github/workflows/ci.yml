@@ -32,6 +32,40 @@ jobs:
       - name: Build Windows installers
         if: github.event_name == 'push'
         run: pnpm tauri build
+      - name: Stress test packaged privacy proxy
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $appPath = Resolve-Path 'src-tauri/target/release/sinkhole.exe'
+          $app = Start-Process -FilePath $appPath -WindowStyle Hidden -PassThru
+          try {
+            $listener = $null
+            for ($attempt = 0; $attempt -lt 80; $attempt++) {
+              Start-Sleep -Milliseconds 250
+              if ($app.HasExited) {
+                throw "SinkHole exited before stress testing with code $($app.ExitCode)."
+              }
+              $listener = Get-NetTCPConnection -State Listen -LocalPort 8118 -ErrorAction SilentlyContinue |
+                Where-Object { $_.OwningProcess -eq $app.Id }
+              if ($listener) { break }
+            }
+            if (-not $listener) {
+              throw 'SinkHole did not listen on 127.0.0.1:8118 within 20 seconds.'
+            }
+
+            python scripts/stress_test.py --requests-per-category 1000 --concurrency 128
+            if ($LASTEXITCODE -ne 0) {
+              throw "SinkHole stress test failed with exit code $LASTEXITCODE."
+            }
+            if ($app.HasExited) {
+              throw "SinkHole exited during stress testing with code $($app.ExitCode)."
+            }
+          } finally {
+            if (-not $app.HasExited) {
+              Stop-Process -Id $app.Id
+              Wait-Process -Id $app.Id -Timeout 10 -ErrorAction SilentlyContinue
+            }
+          }
       - name: Upload Windows installers
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
