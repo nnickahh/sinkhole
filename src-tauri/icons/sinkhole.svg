@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SinkHole cosmic gravity well">
+  <defs>
+    <linearGradient id="disk" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="0.52" stop-color="#c4b5fd"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="funnel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <path d="M56 244C112 174 400 174 456 244C400 314 112 314 56 244Z" fill="none" stroke="url(#disk)" stroke-width="42" stroke-linecap="round"/>
+  <path d="M152 273C178 334 215 354 234 430C240 455 272 455 278 430C297 354 334 334 360 273C318 303 194 303 152 273Z" fill="url(#funnel)" opacity="0.9"/>
+  <ellipse cx="256" cy="244" rx="105" ry="82" fill="#05030f" stroke="#ddd6fe" stroke-width="9"/>
+  <ellipse cx="256" cy="244" rx="68" ry="49" fill="#000"/>
+  <path d="M94 110L103 137L130 146L103 155L94 182L85 155L58 146L85 137Z" fill="#ecfeff" stroke="#22d3ee" stroke-width="5" stroke-linejoin="round"/>
+  <circle cx="405" cy="116" r="16" fill="#a78bfa"/>
+</svg>

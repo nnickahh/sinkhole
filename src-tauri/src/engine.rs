@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
@@ -9,28 +9,88 @@ use std::{
 };
 use url::Url;
 
-pub const DEFAULT_FILTER_LIST: &str = "https://easylist.to/easylist/easylist.txt";
+pub const EASYLIST_URL: &str = "https://easylist.to/easylist/easylist.txt";
+pub const EASYPRIVACY_URL: &str = "https://easylist.to/easylist/easyprivacy.txt";
+pub const WINDOWS_TELEMETRY_URL: &str =
+    "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.winoffice.txt";
 pub const PROXY_ADDRESS: &str = "127.0.0.1:8118";
+pub const CONNECTION_TEST_HOST: &str = "sinkhole.test";
 
-const FALLBACK_RULES: &str = r#"
+const FALLBACK_AD_RULES: &str = r#"
 ||doubleclick.net^
 ||googlesyndication.com^
 ||googleadservices.com^
 ||adnxs.com^
 ||amazon-adsystem.com^
-||scorecardresearch.com^
 ||taboola.com^
 ||outbrain.com^
 "#;
 
+const FALLBACK_TRACKER_RULES: &str = r#"
+||scorecardresearch.com^
+||google-analytics.com^
+||mixpanel.com^
+||segment.io^
+||hotjar.com^
+"#;
+
+const FALLBACK_TELEMETRY_RULES: &str = r#"
+||vortex.data.microsoft.com^
+||telemetry.microsoft.com^
+||settings-win.data.microsoft.com^
+||watson.telemetry.microsoft.com^
+"#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RuleCategory {
+    Ad,
+    Tracker,
+    Telemetry,
+    Custom,
+}
+
+impl RuleCategory {
+    fn priority(self) -> u8 {
+        match self {
+            Self::Custom => 0,
+            Self::Ad => 1,
+            Self::Tracker => 2,
+            Self::Telemetry => 3,
+        }
+    }
+
+    fn most_specific(self, other: Self) -> Self {
+        if other.priority() > self.priority() {
+            other
+        } else {
+            self
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct RuleCounts {
+    ads: usize,
+    trackers: usize,
+    telemetry: usize,
+    custom: usize,
+}
+
+impl RuleCounts {
+    fn total(self) -> usize {
+        self.ads + self.trackers + self.telemetry + self.custom
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RuleSet {
-    blocked_domains: HashSet<String>,
+    blocked_domains: HashMap<String, RuleCategory>,
     allowed_domains: HashSet<String>,
 }
 
 impl RuleSet {
-    pub fn parse(contents: &str) -> Self {
+    pub fn parse(contents: &str, category: RuleCategory) -> Self {
         let mut rules = Self::default();
 
         for raw_line in contents.lines() {
@@ -40,7 +100,7 @@ impl RuleSet {
             }
 
             if let Some(domain) = parse_hosts_line(line) {
-                rules.blocked_domains.insert(domain);
+                rules.insert_blocked(domain, category);
                 continue;
             }
 
@@ -54,7 +114,7 @@ impl RuleSet {
                 if is_exception {
                     rules.allowed_domains.insert(domain);
                 } else {
-                    rules.blocked_domains.insert(domain);
+                    rules.insert_blocked(domain, category);
                 }
             }
         }
@@ -62,8 +122,17 @@ impl RuleSet {
         rules
     }
 
+    fn insert_blocked(&mut self, domain: String, category: RuleCategory) {
+        self.blocked_domains
+            .entry(domain)
+            .and_modify(|current| *current = current.most_specific(category))
+            .or_insert(category);
+    }
+
     pub fn merge(&mut self, other: Self) {
-        self.blocked_domains.extend(other.blocked_domains);
+        for (domain, category) in other.blocked_domains {
+            self.insert_blocked(domain, category);
+        }
         self.allowed_domains.extend(other.allowed_domains);
     }
 
@@ -71,14 +140,27 @@ impl RuleSet {
         self.blocked_domains.len() + self.allowed_domains.len()
     }
 
-    fn blocks_host(&self, host: &str, user_whitelist: &HashSet<String>) -> bool {
+    fn counts(&self) -> RuleCounts {
+        let mut counts = RuleCounts::default();
+        for category in self.blocked_domains.values() {
+            match category {
+                RuleCategory::Ad => counts.ads += 1,
+                RuleCategory::Tracker => counts.trackers += 1,
+                RuleCategory::Telemetry => counts.telemetry += 1,
+                RuleCategory::Custom => counts.custom += 1,
+            }
+        }
+        counts
+    }
+
+    fn classify_host(&self, host: &str, user_whitelist: &HashSet<String>) -> Option<RuleCategory> {
         if domain_or_parent_is_listed(host, user_whitelist)
             || domain_or_parent_is_listed(host, &self.allowed_domains)
         {
-            return false;
+            return None;
         }
 
-        domain_or_parent_is_listed(host, &self.blocked_domains)
+        domain_or_parent_category(host, &self.blocked_domains)
     }
 }
 
@@ -91,7 +173,12 @@ struct EngineInner {
     rules: RwLock<RuleSet>,
     user_whitelist: RwLock<HashSet<String>>,
     enabled: AtomicBool,
-    blocked_count: AtomicU64,
+    blocked_ads: AtomicU64,
+    blocked_trackers: AtomicU64,
+    blocked_telemetry: AtomicU64,
+    blocked_custom: AtomicU64,
+    requests_processed: AtomicU64,
+    last_request_millis: AtomicU64,
     active_lists: AtomicUsize,
     proxy_running: AtomicBool,
     started_at: Instant,
@@ -101,24 +188,49 @@ struct EngineInner {
 #[serde(rename_all = "camelCase")]
 pub struct AdblockStats {
     pub total_blocked: u64,
+    pub blocked_ads: u64,
+    pub blocked_trackers: u64,
+    pub blocked_telemetry: u64,
+    pub blocked_custom: u64,
     pub active_rules: usize,
+    pub active_ad_rules: usize,
+    pub active_tracker_rules: usize,
+    pub active_telemetry_rules: usize,
+    pub active_custom_rules: usize,
     pub active_lists: usize,
     pub protection_enabled: bool,
     pub proxy_running: bool,
     pub proxy_address: &'static str,
+    pub requests_processed: u64,
+    pub last_request_age_seconds: Option<u64>,
     pub uptime_seconds: u64,
     pub bandwidth_saved_bytes: u64,
 }
 
 impl AdblockEngine {
     pub fn new(enabled: bool, whitelist: &[String]) -> Self {
+        let mut fallback_rules = RuleSet::parse(FALLBACK_AD_RULES, RuleCategory::Ad);
+        fallback_rules.merge(RuleSet::parse(
+            FALLBACK_TRACKER_RULES,
+            RuleCategory::Tracker,
+        ));
+        fallback_rules.merge(RuleSet::parse(
+            FALLBACK_TELEMETRY_RULES,
+            RuleCategory::Telemetry,
+        ));
+
         let engine = Self {
             inner: Arc::new(EngineInner {
-                rules: RwLock::new(RuleSet::parse(FALLBACK_RULES)),
+                rules: RwLock::new(fallback_rules),
                 user_whitelist: RwLock::new(HashSet::new()),
                 enabled: AtomicBool::new(enabled),
-                blocked_count: AtomicU64::new(0),
-                active_lists: AtomicUsize::new(1),
+                blocked_ads: AtomicU64::new(0),
+                blocked_trackers: AtomicU64::new(0),
+                blocked_telemetry: AtomicU64::new(0),
+                blocked_custom: AtomicU64::new(0),
+                requests_processed: AtomicU64::new(0),
+                last_request_millis: AtomicU64::new(0),
+                active_lists: AtomicUsize::new(3),
                 proxy_running: AtomicBool::new(false),
                 started_at: Instant::now(),
             }),
@@ -151,10 +263,10 @@ impl AdblockEngine {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = normalized;
     }
 
-    pub fn replace_rules(&self, sources: &[String]) -> usize {
+    pub fn replace_rules(&self, sources: &[(String, RuleCategory)]) -> usize {
         let mut combined = RuleSet::default();
-        for source in sources {
-            combined.merge(RuleSet::parse(source));
+        for (source, category) in sources {
+            combined.merge(RuleSet::parse(source, *category));
         }
 
         let count = combined.len();
@@ -172,24 +284,27 @@ impl AdblockEngine {
     }
 
     pub fn check_url(&self, url: &str) -> bool {
-        if !self.is_enabled() {
-            return false;
-        }
+        self.classify_url(url).is_some()
+    }
 
-        let Some(host) = host_from_input(url) else {
-            return false;
-        };
-        self.check_host(&host)
+    pub fn classify_url(&self, url: &str) -> Option<RuleCategory> {
+        if !self.is_enabled() {
+            return None;
+        }
+        let host = host_from_input(url)?;
+        self.classify_host(&host)
     }
 
     pub fn check_host(&self, host: &str) -> bool {
+        self.classify_host(host).is_some()
+    }
+
+    pub fn classify_host(&self, host: &str) -> Option<RuleCategory> {
         if !self.is_enabled() {
-            return false;
+            return None;
         }
 
-        let Some(host) = normalize_domain(host) else {
-            return false;
-        };
+        let host = normalize_domain(host)?;
         let rules = self
             .inner
             .rules
@@ -200,33 +315,97 @@ impl AdblockEngine {
             .user_whitelist
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        rules.blocks_host(&host, &whitelist)
+        rules.classify_host(&host, &whitelist)
     }
 
-    pub fn record_block(&self) {
-        self.inner.blocked_count.fetch_add(1, Ordering::Relaxed);
+    pub fn record_request(&self) {
+        self.inner
+            .requests_processed
+            .fetch_add(1, Ordering::Relaxed);
+        let elapsed_millis = self
+            .inner
+            .started_at
+            .elapsed()
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        self.inner
+            .last_request_millis
+            .store(elapsed_millis.saturating_add(1), Ordering::Relaxed);
+    }
+
+    pub fn record_block(&self, category: RuleCategory) {
+        let counter = match category {
+            RuleCategory::Ad => &self.inner.blocked_ads,
+            RuleCategory::Tracker => &self.inner.blocked_trackers,
+            RuleCategory::Telemetry => &self.inner.blocked_telemetry,
+            RuleCategory::Custom => &self.inner.blocked_custom,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn stats(&self) -> AdblockStats {
-        let total_blocked = self.inner.blocked_count.load(Ordering::Relaxed);
-        let active_rules = self
+        let blocked_ads = self.inner.blocked_ads.load(Ordering::Relaxed);
+        let blocked_trackers = self.inner.blocked_trackers.load(Ordering::Relaxed);
+        let blocked_telemetry = self.inner.blocked_telemetry.load(Ordering::Relaxed);
+        let blocked_custom = self.inner.blocked_custom.load(Ordering::Relaxed);
+        let total_blocked = blocked_ads
+            .saturating_add(blocked_trackers)
+            .saturating_add(blocked_telemetry)
+            .saturating_add(blocked_custom);
+        let rule_counts = self
             .inner
             .rules
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .len();
+            .counts();
+        let elapsed_millis = self
+            .inner
+            .started_at
+            .elapsed()
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        let last_request_millis = self.inner.last_request_millis.load(Ordering::Relaxed);
+        let last_request_age_seconds = (last_request_millis > 0)
+            .then(|| elapsed_millis.saturating_sub(last_request_millis.saturating_sub(1)) / 1_000);
 
         AdblockStats {
             total_blocked,
-            active_rules,
+            blocked_ads,
+            blocked_trackers,
+            blocked_telemetry,
+            blocked_custom,
+            active_rules: rule_counts.total(),
+            active_ad_rules: rule_counts.ads,
+            active_tracker_rules: rule_counts.trackers,
+            active_telemetry_rules: rule_counts.telemetry,
+            active_custom_rules: rule_counts.custom,
             active_lists: self.inner.active_lists.load(Ordering::Relaxed),
             protection_enabled: self.is_enabled(),
             proxy_running: self.inner.proxy_running.load(Ordering::Relaxed),
             proxy_address: PROXY_ADDRESS,
+            requests_processed: self.inner.requests_processed.load(Ordering::Relaxed),
+            last_request_age_seconds,
             uptime_seconds: self.inner.started_at.elapsed().as_secs(),
             bandwidth_saved_bytes: total_blocked.saturating_mul(42_000),
         }
     }
+}
+
+pub fn category_for_url(url: &str) -> RuleCategory {
+    match url {
+        EASYLIST_URL => RuleCategory::Ad,
+        EASYPRIVACY_URL => RuleCategory::Tracker,
+        WINDOWS_TELEMETRY_URL => RuleCategory::Telemetry,
+        _ => RuleCategory::Custom,
+    }
+}
+
+pub fn default_filter_list_urls() -> Vec<String> {
+    vec![
+        EASYLIST_URL.to_owned(),
+        EASYPRIVACY_URL.to_owned(),
+        WINDOWS_TELEMETRY_URL.to_owned(),
+    ]
 }
 
 fn parse_hosts_line(line: &str) -> Option<String> {
@@ -293,19 +472,48 @@ fn domain_or_parent_is_listed(host: &str, domains: &HashSet<String>) -> bool {
     }
 }
 
+fn domain_or_parent_category(
+    host: &str,
+    domains: &HashMap<String, RuleCategory>,
+) -> Option<RuleCategory> {
+    let mut candidate = host;
+    loop {
+        if let Some(category) = domains.get(candidate) {
+            return Some(*category);
+        }
+        let dot_index = candidate.find('.')?;
+        candidate = &candidate[dot_index + 1..];
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parses_easylist_and_hosts_rules() {
-        let rules = RuleSet::parse(
-            "! comment\n||ads.example.com^$third-party\n@@||safe.ads.example.com^\n0.0.0.0 tracker.test\n",
+    fn parses_easylist_hosts_exceptions_and_categories() {
+        let mut rules = RuleSet::parse(
+            "! comment\n||ads.example.com^$third-party\n@@||safe.ads.example.com^\n",
+            RuleCategory::Ad,
         );
+        rules.merge(RuleSet::parse(
+            "0.0.0.0 tracker.test\n||ads.example.com^\n",
+            RuleCategory::Tracker,
+        ));
+
         assert_eq!(rules.len(), 3);
-        assert!(rules.blocks_host("cdn.ads.example.com", &HashSet::new()));
-        assert!(!rules.blocks_host("safe.ads.example.com", &HashSet::new()));
-        assert!(rules.blocks_host("tracker.test", &HashSet::new()));
+        assert_eq!(
+            rules.classify_host("cdn.ads.example.com", &HashSet::new()),
+            Some(RuleCategory::Tracker)
+        );
+        assert_eq!(
+            rules.classify_host("safe.ads.example.com", &HashSet::new()),
+            None
+        );
+        assert_eq!(
+            rules.classify_host("tracker.test", &HashSet::new()),
+            Some(RuleCategory::Tracker)
+        );
     }
 
     #[test]
@@ -313,37 +521,50 @@ mod tests {
         let engine = AdblockEngine::new(true, &["doubleclick.net".to_owned()]);
         assert!(!engine.check_url("http://ads.doubleclick.net/pagead.js"));
         engine.set_whitelist(&[]);
-        assert!(engine.check_url("http://ads.doubleclick.net/pagead.js"));
+        assert_eq!(
+            engine.classify_url("http://ads.doubleclick.net/pagead.js"),
+            Some(RuleCategory::Ad)
+        );
         engine.set_enabled(false);
         assert!(!engine.check_url("http://ads.doubleclick.net/pagead.js"));
     }
 
     #[test]
-    fn only_sinkholed_requests_increment_stats() {
+    fn requests_and_block_categories_are_counted_separately() {
         let engine = AdblockEngine::new(true, &[]);
-        assert!(engine.check_url("https://doubleclick.net/ad"));
-        assert_eq!(engine.stats().total_blocked, 0);
-        engine.record_block();
-        assert_eq!(engine.stats().total_blocked, 1);
+        engine.record_request();
+        engine.record_block(RuleCategory::Tracker);
+        engine.record_block(RuleCategory::Telemetry);
+        let stats = engine.stats();
+        assert_eq!(stats.requests_processed, 1);
+        assert_eq!(stats.total_blocked, 2);
+        assert_eq!(stats.blocked_trackers, 1);
+        assert_eq!(stats.blocked_telemetry, 1);
+        assert!(stats.last_request_age_seconds.is_some());
     }
 
     #[test]
-    #[ignore = "requires live EasyList access"]
-    fn live_easylist_contains_more_than_thirty_thousand_supported_rules() {
+    #[ignore = "requires live filter-list access"]
+    fn live_default_lists_contain_more_than_one_hundred_thousand_supported_rules() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime should build");
-        let source = runtime.block_on(async {
-            reqwest::get(DEFAULT_FILTER_LIST)
-                .await
-                .expect("EasyList should respond")
-                .error_for_status()
-                .expect("EasyList should return a successful status")
-                .text()
-                .await
-                .expect("EasyList should contain text")
+        let count = runtime.block_on(async {
+            let mut combined = RuleSet::default();
+            for url in default_filter_list_urls() {
+                let source = reqwest::get(&url)
+                    .await
+                    .expect("filter list should respond")
+                    .error_for_status()
+                    .expect("filter list should return a successful status")
+                    .text()
+                    .await
+                    .expect("filter list should contain text");
+                combined.merge(RuleSet::parse(&source, category_for_url(&url)));
+            }
+            combined.len()
         });
-        assert!(RuleSet::parse(&source).len() > 30_000);
+        assert!(count > 100_000, "loaded {count} supported privacy rules");
     }
 }

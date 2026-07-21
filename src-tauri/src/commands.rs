@@ -1,7 +1,13 @@
-use crate::engine::{normalize_domain, AdblockEngine, AdblockStats, DEFAULT_FILTER_LIST};
+use crate::{
+    engine::{
+        category_for_url, default_filter_list_urls, normalize_domain, AdblockEngine, AdblockStats,
+        RuleCategory, EASYLIST_URL,
+    },
+    system_proxy,
+};
 use serde::{Deserialize, Serialize};
 use std::{sync::RwLock, time::Duration};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_store::StoreExt;
 use url::Url;
 
@@ -14,6 +20,8 @@ const MAX_FILTER_BYTES: usize = 16 * 1024 * 1024;
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub protection_enabled: bool,
+    #[serde(default)]
+    pub system_proxy_enabled: bool,
     pub filter_list_urls: Vec<String>,
     pub whitelist_domains: Vec<String>,
 }
@@ -22,7 +30,8 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             protection_enabled: true,
-            filter_list_urls: vec![DEFAULT_FILTER_LIST.to_owned()],
+            system_proxy_enabled: false,
+            filter_list_urls: default_filter_list_urls(),
             whitelist_domains: Vec::new(),
         }
     }
@@ -57,7 +66,16 @@ pub fn load_settings(app: &AppHandle) -> AppSettings {
         return AppSettings::default();
     };
 
-    serde_json::from_value(value).unwrap_or_default()
+    let mut settings: AppSettings = serde_json::from_value(value).unwrap_or_default();
+    if settings.filter_list_urls.len() == 1
+        && settings
+            .filter_list_urls
+            .first()
+            .is_some_and(|url| url == EASYLIST_URL)
+    {
+        settings.filter_list_urls = default_filter_list_urls();
+    }
+    settings
 }
 
 fn persist_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
@@ -103,6 +121,70 @@ pub fn get_settings(state: State<'_, AppState>) -> AppSettings {
 }
 
 #[tauri::command]
+pub fn set_system_proxy(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enable: bool,
+) -> Result<AppSettings, String> {
+    if enable {
+        system_proxy::enable(&app)?;
+    } else {
+        system_proxy::disable(&app)?;
+    }
+
+    let settings = {
+        let mut settings = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        settings.system_proxy_enabled = enable;
+        settings.clone()
+    };
+    persist_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn set_quick_protection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enable: bool,
+) -> Result<AppSettings, String> {
+    if enable {
+        system_proxy::enable(&app)?;
+    } else {
+        system_proxy::disable(&app)?;
+    }
+
+    state.engine.set_enabled(enable);
+    let settings = {
+        let mut settings = state
+            .settings
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        settings.protection_enabled = enable;
+        settings.system_proxy_enabled = enable;
+        settings.clone()
+    };
+    persist_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn open_dashboard(app: AppHandle) -> Result<(), String> {
+    let dashboard = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Dashboard window is unavailable".to_owned())?;
+    dashboard.unminimize().map_err(|error| error.to_string())?;
+    dashboard.show().map_err(|error| error.to_string())?;
+    dashboard.set_focus().map_err(|error| error.to_string())?;
+    if let Some(quick) = app.get_webview_window("quick") {
+        let _ = quick.hide();
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn update_settings(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -130,6 +212,22 @@ pub fn check_link(state: State<'_, AppState>, url: String) -> bool {
     state.engine.check_url(&url)
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkInspection {
+    pub blocked: bool,
+    pub category: Option<RuleCategory>,
+}
+
+#[tauri::command]
+pub fn inspect_link(state: State<'_, AppState>, url: String) -> LinkInspection {
+    let category = state.engine.classify_url(&url);
+    LinkInspection {
+        blocked: category.is_some(),
+        category,
+    }
+}
+
 pub async fn fetch_and_replace_rules(
     engine: &AdblockEngine,
     settings: &AppSettings,
@@ -145,7 +243,7 @@ pub async fn fetch_and_replace_rules(
 
     for list_url in &settings.filter_list_urls {
         match fetch_filter_source(&client, list_url).await {
-            Ok(source) => sources.push(source),
+            Ok(source) => sources.push((source, category_for_url(list_url))),
             Err(error) => failures.push(format!("{list_url}: {error}")),
         }
     }
@@ -228,10 +326,8 @@ mod tests {
     fn settings_round_trip_and_normalize() {
         let settings = validate_settings(AppSettings {
             protection_enabled: false,
-            filter_list_urls: vec![
-                DEFAULT_FILTER_LIST.to_owned(),
-                DEFAULT_FILTER_LIST.to_owned(),
-            ],
+            system_proxy_enabled: false,
+            filter_list_urls: vec![EASYLIST_URL.to_owned(), EASYLIST_URL.to_owned()],
             whitelist_domains: vec![".Example.COM.".to_owned()],
         })
         .expect("settings should validate");

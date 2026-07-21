@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Generated mobile icon sets are not used by this Windows desktop build.
+src-tauri/icons/android/
+src-tauri/icons/ios/

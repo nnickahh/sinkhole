@@ -1,4 +1,4 @@
-use crate::engine::{AdblockEngine, PROXY_ADDRESS};
+use crate::engine::{AdblockEngine, CONNECTION_TEST_HOST, PROXY_ADDRESS};
 use std::{io, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -44,9 +44,14 @@ async fn handle_connection(mut client: TcpStream, engine: AdblockEngine) -> io::
     let Some(parsed) = ParsedRequest::from_bytes(&request) else {
         return write_response(&mut client, "400 Bad Request").await;
     };
+    engine.record_request();
 
-    if engine.check_host(&parsed.host) {
-        engine.record_block();
+    if parsed.host.eq_ignore_ascii_case(CONNECTION_TEST_HOST) {
+        return write_connection_test(&mut client).await;
+    }
+
+    if let Some(category) = engine.classify_host(&parsed.host) {
+        engine.record_block(category);
         return write_response(&mut client, "204 No Content").await;
     }
 
@@ -115,6 +120,24 @@ async fn write_response(client: &mut TcpStream, status: &str) -> io::Result<()> 
                 .as_bytes(),
         )
         .await
+}
+
+async fn write_connection_test(client: &mut TcpStream) -> io::Result<()> {
+    let body = concat!(
+        "<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" ",
+        "content=\"width=device-width,initial-scale=1\"><title>SinkHole connected</title>",
+        "<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#050313;",
+        "color:#eef2ff;font:16px system-ui}main{max-width:560px;padding:48px;border:1px solid #8b5cf655;",
+        "border-radius:28px;background:#ffffff0a;box-shadow:0 0 100px #6d28d933;text-align:center}",
+        "h1{font-size:42px;margin:0 0 12px;color:#c4b5fd}p{color:#a5b4fc;line-height:1.6}</style>",
+        "<main><h1>Connection captured.</h1><p>This browser is routing through SinkHole. ",
+        "Known ad, tracker, and telemetry hosts can now be sent into the event horizon.</p></main>"
+    );
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    client.write_all(response.as_bytes()).await
 }
 
 #[derive(Debug)]
@@ -307,6 +330,53 @@ mod tests {
             let response = String::from_utf8(response).expect("response should be UTF-8");
             assert!(response.starts_with("HTTP/1.1 204 No Content"));
             assert_eq!(engine.stats().total_blocked, 1);
+            assert_eq!(engine.stats().blocked_ads, 1);
+            assert_eq!(engine.stats().requests_processed, 1);
+        });
+    }
+
+    #[test]
+    fn serves_a_local_connection_test() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime should build");
+
+        runtime.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("test listener should bind");
+            let address = listener
+                .local_addr()
+                .expect("listener should have an address");
+            let engine = AdblockEngine::new(true, &[]);
+            let server_engine = engine.clone();
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("client should connect");
+                handle_connection(stream, server_engine)
+                    .await
+                    .expect("request should be handled");
+            });
+
+            let mut client = TcpStream::connect(address)
+                .await
+                .expect("proxy client should connect");
+            client
+                .write_all(b"GET http://sinkhole.test/ HTTP/1.1\r\nHost: sinkhole.test\r\n\r\n")
+                .await
+                .expect("request should write");
+            let mut response = Vec::new();
+            client
+                .read_to_end(&mut response)
+                .await
+                .expect("response should read");
+            server.await.expect("proxy task should finish");
+
+            let response = String::from_utf8(response).expect("response should be UTF-8");
+            assert!(response.starts_with("HTTP/1.1 200 OK"));
+            assert!(response.contains("Connection captured"));
+            assert_eq!(engine.stats().requests_processed, 1);
+            assert_eq!(engine.stats().total_blocked, 0);
         });
     }
 }

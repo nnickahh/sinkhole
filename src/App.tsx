@@ -1,41 +1,72 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Activity,
+  Ban,
   Check,
   Clock3,
   Copy,
-  EyeOff,
-  Gauge,
+  ExternalLink,
+  Fingerprint,
   ListFilter,
-  LockKeyhole,
+  Orbit,
   Power,
+  Radio,
   RefreshCw,
+  Satellite,
   Settings as SettingsIcon,
   ShieldCheck,
+  Sparkles,
+  Unplug,
   Wifi,
   Zap,
 } from "lucide-react";
 import { Settings } from "./components/Settings";
-import type { AdblockStats, AppSettings } from "./types";
+import { QuickPanel } from "./components/QuickPanel";
+import type { AdblockStats, AppSettings, LinkInspection } from "./types";
 import "./App.css";
+
+const DEFAULT_LISTS = [
+  "https://easylist.to/easylist/easylist.txt",
+  "https://easylist.to/easylist/easyprivacy.txt",
+  "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.winoffice.txt",
+];
 
 const EMPTY_STATS: AdblockStats = {
   totalBlocked: 0,
+  blockedAds: 0,
+  blockedTrackers: 0,
+  blockedTelemetry: 0,
+  blockedCustom: 0,
   activeRules: 0,
+  activeAdRules: 0,
+  activeTrackerRules: 0,
+  activeTelemetryRules: 0,
+  activeCustomRules: 0,
   activeLists: 0,
   protectionEnabled: true,
   proxyRunning: false,
   proxyAddress: "127.0.0.1:8118",
+  requestsProcessed: 0,
+  lastRequestAgeSeconds: null,
   uptimeSeconds: 0,
   bandwidthSavedBytes: 0,
 };
 
 const EMPTY_SETTINGS: AppSettings = {
   protectionEnabled: true,
-  filterListUrls: ["https://easylist.to/easylist/easylist.txt"],
+  systemProxyEnabled: false,
+  filterListUrls: DEFAULT_LISTS,
   whitelistDomains: [],
 };
+
+const TEST_TARGETS = [
+  { label: "Ad", url: "http://ads.doubleclick.net/pagead.js" },
+  { label: "Tracker", url: "https://www.google-analytics.com/collect" },
+  { label: "Telemetry", url: "https://vortex.data.microsoft.com/collect" },
+];
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
@@ -60,15 +91,15 @@ function formatUptime(seconds: number) {
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
-function App() {
+function Dashboard() {
   const [stats, setStats] = useState(EMPTY_STATS);
   const [settings, setSettings] = useState(EMPTY_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [testUrl, setTestUrl] = useState("http://ads.doubleclick.net/pagead.js");
-  const [testResult, setTestResult] = useState<boolean | null>(null);
+  const [testUrl, setTestUrl] = useState(TEST_TARGETS[0].url);
+  const [testResult, setTestResult] = useState<LinkInspection | null>(null);
   const [copied, setCopied] = useState(false);
 
   const refreshStats = useCallback(async () => {
@@ -84,7 +115,7 @@ function App() {
       refreshStats(),
       invoke<AppSettings>("get_settings").then(setSettings),
     ]).catch((cause) => setError(String(cause)));
-    const timer = window.setInterval(() => void refreshStats(), 2000);
+    const timer = window.setInterval(() => void refreshStats(), 1500);
     return () => window.clearInterval(timer);
   }, [refreshStats]);
 
@@ -96,6 +127,22 @@ function App() {
         enable: !stats.protectionEnabled,
       });
       setSettings((current) => ({ ...current, protectionEnabled: enabled }));
+      await refreshStats();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleBrowserConnection = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await invoke<AppSettings>("set_system_proxy", {
+        enable: !settings.systemProxyEnabled,
+      });
+      setSettings(saved);
       await refreshStats();
     } catch (cause) {
       setError(String(cause));
@@ -134,10 +181,11 @@ function App() {
     }
   };
 
-  const checkLink = async () => {
+  const checkLink = async (url = testUrl) => {
     setError(null);
+    setTestUrl(url);
     try {
-      setTestResult(await invoke<boolean>("check_link", { url: testUrl }));
+      setTestResult(await invoke<LinkInspection>("inspect_link", { url }));
     } catch (cause) {
       setError(String(cause));
     }
@@ -149,34 +197,43 @@ function App() {
     window.setTimeout(() => setCopied(false), 1500);
   };
 
+  const connected = settings.systemProxyEnabled && stats.proxyRunning;
+  const observed = connected && stats.requestsProcessed > 0;
   const active = stats.protectionEnabled;
+  const statusLabel = !stats.proxyRunning
+    ? "PROXY STARTING"
+    : !connected
+      ? "BROWSER NOT CONNECTED"
+      : observed
+        ? "TRAFFIC CAPTURED"
+        : "CONNECTED — WAITING FOR TRAFFIC";
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#06100d] text-slate-100">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_72%_8%,rgba(16,185,129,0.13),transparent_35%),radial-gradient(circle_at_10%_90%,rgba(14,116,144,0.12),transparent_30%)]" />
-      <div className="pointer-events-none absolute inset-0 opacity-[0.035] app-grid" />
+    <main className="cosmos relative min-h-screen overflow-hidden text-slate-100">
+      <div className="stars pointer-events-none absolute inset-0" />
+      <div className="nebula pointer-events-none absolute inset-0" />
 
-      <div className="relative mx-auto flex min-h-screen max-w-[1440px] flex-col px-8 py-6">
+      <div className="relative mx-auto flex min-h-screen max-w-[1480px] flex-col px-5 py-5 sm:px-8">
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="relative grid h-11 w-11 place-items-center rounded-2xl border border-emerald-300/20 bg-emerald-400/10 text-emerald-300 shadow-glow">
-              <ShieldCheck size={24} strokeWidth={1.8} />
-              <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#06100d] bg-emerald-400" />
+            <div className="brand-orbit relative grid h-12 w-12 place-items-center rounded-2xl border border-violet-300/25 bg-violet-500/10 text-violet-200">
+              <Orbit size={27} strokeWidth={1.7} />
+              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_14px_#67e8f9]" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold tracking-tight text-white">SinkHole</h1>
-              <p className="text-xs tracking-wide text-slate-500">LOCAL PRIVACY NETWORK</p>
+              <h1 className="text-xl font-semibold tracking-[-0.03em] text-white">SinkHole</h1>
+              <p className="text-[10px] font-medium tracking-[0.28em] text-violet-300/70">LOCAL PRIVACY GRAVITY</p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.035] px-4 py-2 text-xs text-slate-400 sm:flex">
-              <span className={`h-1.5 w-1.5 rounded-full ${stats.proxyRunning ? "bg-emerald-400" : "bg-amber-400"}`} />
-              Proxy {stats.proxyRunning ? "listening" : "starting"}
+            <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-[#0b0820]/70 px-4 py-2 text-xs text-slate-400 sm:flex">
+              <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-cyan-300 shadow-[0_0_10px_#67e8f9]" : "bg-amber-300"}`} />
+              {statusLabel}
             </div>
             <button
               aria-label="Open settings"
-              className="rounded-xl border border-white/10 bg-white/[0.035] p-2.5 text-slate-400 transition hover:border-white/20 hover:bg-white/[0.07] hover:text-white"
+              className="rounded-xl border border-white/10 bg-white/[0.04] p-2.5 text-slate-400 transition hover:border-violet-300/30 hover:bg-violet-400/10 hover:text-white"
               onClick={() => setSettingsOpen(true)}
             >
               <SettingsIcon size={20} />
@@ -185,157 +242,157 @@ function App() {
         </header>
 
         {error && (
-          <div className="mt-5 flex items-center justify-between rounded-xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">
+          <div className="mt-5 flex items-center justify-between rounded-xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
             <span className="truncate">{error}</span>
-            <button className="ml-4 text-rose-300 hover:text-white" onClick={() => setError(null)}>
-              Dismiss
-            </button>
+            <button className="ml-4 text-rose-300 hover:text-white" onClick={() => setError(null)}>Dismiss</button>
           </div>
         )}
 
-        <section className="grid flex-1 items-center gap-8 py-8 lg:grid-cols-[1.05fr_1fr]">
+        <section className="grid flex-1 items-center gap-8 py-7 lg:grid-cols-[0.92fr_1.08fr]">
           <div className="flex flex-col items-center justify-center lg:items-start">
-            <div className="mb-8 flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-xs font-medium text-slate-400">
-              <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-emerald-400 status-pulse" : "bg-slate-500"}`} />
-              {active ? "PROTECTION ACTIVE" : "PROTECTION PAUSED"}
+            <div className="mb-7 flex items-center gap-2 rounded-full border border-white/10 bg-[#09061a]/70 px-3 py-1.5 text-xs font-semibold tracking-wider text-slate-400">
+              <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-violet-300 status-pulse" : "bg-slate-600"}`} />
+              {active ? "FILTER ENGINE ONLINE" : "FILTER ENGINE PAUSED"}
             </div>
 
             <button
-              aria-label={active ? "Disable protection" : "Enable protection"}
-              className={`power-orb group relative grid h-52 w-52 place-items-center rounded-full border transition-all duration-500 ${
-                active
-                  ? "border-emerald-300/40 bg-emerald-400/[0.08] shadow-[0_0_100px_rgba(16,185,129,0.22)]"
-                  : "border-white/10 bg-white/[0.025]"
-              } ${busy ? "scale-95 opacity-70" : "hover:scale-[1.02]"}`}
+              aria-label={active ? "Disable filtering" : "Enable filtering"}
+              className={`event-horizon group relative grid h-52 w-52 place-items-center rounded-full transition-all duration-500 ${active ? "is-active" : "is-paused"} ${busy ? "scale-95 opacity-70" : "hover:scale-[1.02]"}`}
               disabled={busy}
               onClick={toggleProtection}
             >
-              <span className={`absolute inset-4 rounded-full border ${active ? "border-emerald-300/15" : "border-white/5"}`} />
-              <span className={`grid h-24 w-24 place-items-center rounded-full border transition ${active ? "border-emerald-300/30 bg-emerald-400/15 text-emerald-300" : "border-white/10 bg-white/5 text-slate-500"}`}>
-                {busy ? <RefreshCw className="animate-spin" size={36} /> : <Power size={38} strokeWidth={1.7} />}
+              <span className="accretion-ring absolute inset-2 rounded-full" />
+              <span className="black-hole grid h-28 w-28 place-items-center rounded-full border border-violet-200/20 text-violet-100">
+                {busy ? <RefreshCw className="animate-spin" size={36} /> : <Power size={38} strokeWidth={1.6} />}
               </span>
             </button>
 
             <div className="mt-8 text-center lg:text-left">
-              <h2 className="text-4xl font-semibold tracking-[-0.04em] text-white">
-                {active ? "Your connection is shielded" : "Protection is paused"}
+              <h2 className="max-w-xl text-4xl font-semibold tracking-[-0.045em] text-white">
+                {active ? "Pull invasive traffic out of orbit." : "The event horizon is dormant."}
               </h2>
               <p className="mt-3 max-w-lg leading-7 text-slate-400">
                 {active
-                  ? "Requests are checked locally against your active privacy rules. Nothing leaves this device for analysis."
-                  : "Traffic passes through without filtering. Turn protection on when you are ready."}
+                  ? "Known ads, trackers, and Windows telemetry hosts are matched locally. HTTPS stays encrypted; SinkHole only sees the destination hostname."
+                  : "Traffic can still pass through the proxy, but no hosts are blocked until the filter engine is online."}
               </p>
+            </div>
+
+            <div className={`mt-6 w-full max-w-lg rounded-2xl border p-4 ${connected ? "border-cyan-300/20 bg-cyan-300/[0.055]" : "border-amber-300/20 bg-amber-300/[0.055]"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={`rounded-xl p-2.5 ${connected ? "bg-cyan-300/10 text-cyan-300" : "bg-amber-300/10 text-amber-300"}`}>
+                    {connected ? <Satellite size={19} /> : <Unplug size={19} />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-white">{connected ? "Windows browser connected" : "Connect browser traffic"}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">{connected ? `${formatNumber(stats.requestsProcessed)} requests observed` : "Nothing is filtered until traffic uses the local proxy."}</p>
+                  </div>
+                </div>
+                <button
+                  className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${connected ? "border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10" : "bg-violet-300 text-[#110a2c] hover:bg-violet-200"}`}
+                  disabled={busy || !stats.proxyRunning}
+                  onClick={toggleBrowserConnection}
+                >
+                  {connected ? "Disconnect" : "Connect Windows"}
+                </button>
+              </div>
+              {connected && (
+                <button className="mt-3 flex items-center gap-1.5 text-xs font-medium text-cyan-300 hover:text-cyan-200" onClick={() => openUrl("http://sinkhole.test")}>
+                  <ExternalLink size={13} /> Open connection test
+                </button>
+              )}
             </div>
           </div>
 
           <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <article className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 backdrop-blur-xl">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">Ads & trackers blocked</span>
-                  <EyeOff className="text-emerald-400" size={19} />
+            <article className="cosmic-card rounded-2xl p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm text-slate-400">Objects sent into the void</p>
+                  <p className="mt-2 text-5xl font-semibold tracking-[-0.05em] text-white">{formatNumber(stats.totalBlocked)}</p>
                 </div>
-                <p className="mt-5 text-4xl font-semibold tracking-tight text-white">{formatNumber(stats.totalBlocked)}</p>
-                <p className="mt-2 text-xs text-slate-500">This session</p>
-              </article>
-
-              <article className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 backdrop-blur-xl">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">Active filter rules</span>
-                  <ListFilter className="text-sky-400" size={19} />
-                </div>
-                <p className="mt-5 text-4xl font-semibold tracking-tight text-white">{formatNumber(stats.activeRules)}</p>
-                <p className="mt-2 text-xs text-slate-500">Across {stats.activeLists} source{stats.activeLists === 1 ? "" : "s"}</p>
-              </article>
-
-              <article className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 backdrop-blur-xl">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">Estimated data saved</span>
-                  <Zap className="text-amber-400" size={19} />
-                </div>
-                <p className="mt-5 text-3xl font-semibold tracking-tight text-white">{formatBytes(stats.bandwidthSavedBytes)}</p>
-                <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500"><Clock3 size={13} /> Up for {formatUptime(stats.uptimeSeconds)}</p>
-              </article>
-
-              <article className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 backdrop-blur-xl">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">Filter latency</span>
-                  <Gauge className="text-violet-400" size={19} />
-                </div>
-                <p className="mt-5 text-3xl font-semibold tracking-tight text-white">&lt; 1 ms</p>
-                <p className="mt-2 text-xs text-slate-500">In-memory domain index</p>
-              </article>
-            </div>
-
-            <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-xl bg-emerald-400/10 p-2.5 text-emerald-400"><Wifi size={19} /></div>
-                  <div>
-                    <p className="text-sm font-medium text-white">Local proxy endpoint</p>
-                    <p className="mt-0.5 font-mono text-xs text-slate-500">{stats.proxyAddress}</p>
-                  </div>
-                </div>
-                <button
-                  className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300 transition hover:bg-white/10"
-                  onClick={copyProxy}
-                >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
-                  {copied ? "Copied" : "Copy address"}
-                </button>
+                <div className="rounded-xl bg-violet-400/10 p-2.5 text-violet-300"><Ban size={20} /></div>
+              </div>
+              <div className="mt-5 grid grid-cols-3 gap-2">
+                <StatPill icon={<Zap size={14} />} label="Ads" value={stats.blockedAds} tone="violet" />
+                <StatPill icon={<Fingerprint size={14} />} label="Trackers" value={stats.blockedTrackers} tone="cyan" />
+                <StatPill icon={<Radio size={14} />} label="Telemetry" value={stats.blockedTelemetry} tone="rose" />
               </div>
             </article>
 
-            <article className="rounded-2xl border border-white/10 bg-black/20 p-5">
-              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-white">
-                <LockKeyhole className="text-slate-400" size={17} />
-                Test a request
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Metric icon={<ListFilter size={18} />} label="Privacy rules" value={formatNumber(stats.activeRules)} detail={`${stats.activeLists} live lists`} />
+              <Metric icon={<Wifi size={18} />} label="Requests seen" value={formatNumber(stats.requestsProcessed)} detail={stats.lastRequestAgeSeconds === null ? "No traffic yet" : `${stats.lastRequestAgeSeconds}s ago`} />
+              <Metric icon={<Clock3 size={18} />} label="Data avoided" value={formatBytes(stats.bandwidthSavedBytes)} detail={`Up ${formatUptime(stats.uptimeSeconds)}`} />
+            </div>
+
+            <article className="cosmic-card rounded-2xl p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-white"><Sparkles className="text-violet-300" size={17} /> Rule scanner</div>
+                  <p className="mt-1 text-xs text-slate-500">Preview why a destination would be blocked.</p>
+                </div>
+                <div className="flex gap-1.5">
+                  {TEST_TARGETS.map((target) => (
+                    <button key={target.label} className="rounded-lg border border-white/10 bg-white/[0.035] px-2.5 py-1.5 text-[11px] text-slate-400 hover:border-violet-300/30 hover:text-violet-200" onClick={() => void checkLink(target.url)}>{target.label}</button>
+                  ))}
+                </div>
               </div>
-              <div className="flex gap-2">
+              <div className="mt-4 flex gap-2">
                 <input
                   aria-label="URL to test"
-                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.035] px-4 py-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-emerald-400/40"
-                  onChange={(event) => {
-                    setTestUrl(event.target.value);
-                    setTestResult(null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") void checkLink();
-                  }}
+                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-violet-400/50"
+                  onChange={(event) => { setTestUrl(event.target.value); setTestResult(null); }}
+                  onKeyDown={(event) => { if (event.key === "Enter") void checkLink(); }}
                   value={testUrl}
                 />
-                <button className="rounded-xl bg-white px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-100" onClick={checkLink}>
-                  Check
-                </button>
+                <button className="rounded-xl bg-white px-5 text-sm font-semibold text-slate-950 transition hover:bg-violet-100" onClick={() => void checkLink()}>Scan</button>
               </div>
-              {testResult !== null && (
-                <p className={`mt-3 flex items-center gap-2 text-xs ${testResult ? "text-emerald-400" : "text-slate-400"}`}>
-                  {testResult ? <Activity size={14} /> : <Check size={14} />}
-                  {testResult ? "Blocked by an active rule" : "Allowed by current settings"}
+              {testResult && (
+                <p className={`mt-3 flex items-center gap-2 text-xs ${testResult.blocked ? "text-violet-200" : "text-slate-400"}`}>
+                  {testResult.blocked ? <Activity size={14} /> : <Check size={14} />}
+                  {testResult.blocked ? `Blocked as ${testResult.category}` : "Allowed by current settings"}
                 </p>
               )}
+            </article>
+
+            <article className="rounded-2xl border border-white/[0.07] bg-black/15 px-5 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <ShieldCheck className="text-slate-500" size={18} />
+                  <div><p className="text-xs text-slate-400">Manual proxy</p><p className="font-mono text-xs text-slate-600">{stats.proxyAddress}</p></div>
+                </div>
+                <button className="flex items-center gap-2 text-xs text-slate-500 hover:text-white" onClick={copyProxy}>{copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "Copied" : "Copy"}</button>
+              </div>
             </article>
           </div>
         </section>
 
-        <footer className="flex items-center justify-between border-t border-white/[0.07] pt-5 text-xs text-slate-600">
-          <span>SinkHole 0.1.0</span>
-          <span className="flex items-center gap-1.5"><ShieldCheck size={13} /> Processing stays on device</span>
+        <footer className="flex items-center justify-between border-t border-white/[0.06] pt-4 text-[11px] text-slate-600">
+          <span>SinkHole 0.1.0 · local-first</span>
+          <span>Blocks known endpoints; it cannot stop local data collection.</span>
         </footer>
       </div>
 
       {settingsOpen && (
-        <Settings
-          onClose={() => setSettingsOpen(false)}
-          onSave={saveSettings}
-          onUpdate={updateRules}
-          saving={busy}
-          settings={settings}
-          updating={updating}
-        />
+        <Settings onClose={() => setSettingsOpen(false)} onSave={saveSettings} onUpdate={updateRules} saving={busy} settings={settings} updating={updating} />
       )}
     </main>
   );
+}
+
+function StatPill({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: number; tone: "violet" | "cyan" | "rose" }) {
+  const tones = { violet: "border-violet-300/15 bg-violet-400/[0.06] text-violet-200", cyan: "border-cyan-300/15 bg-cyan-400/[0.06] text-cyan-200", rose: "border-rose-300/15 bg-rose-400/[0.06] text-rose-200" };
+  return <div className={`rounded-xl border px-3 py-2.5 ${tones[tone]}`}><div className="flex items-center gap-1.5 text-[11px] opacity-70">{icon}{label}</div><p className="mt-1 text-lg font-semibold text-white">{formatNumber(value)}</p></div>;
+}
+
+function Metric({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail: string }) {
+  return <article className="cosmic-card rounded-2xl p-4"><div className="text-violet-300">{icon}</div><p className="mt-3 text-xs text-slate-500">{label}</p><p className="mt-1 text-xl font-semibold text-white">{value}</p><p className="mt-1 text-[11px] text-slate-600">{detail}</p></article>;
+}
+
+function App() {
+  return getCurrentWindow().label === "quick" ? <QuickPanel /> : <Dashboard />;
 }
 
 export default App;

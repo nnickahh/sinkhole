@@ -3,12 +3,26 @@ import {
   Globe2,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
 import type { AppSettings } from "../types";
+
+const RECOMMENDED_LISTS = [
+  "https://easylist.to/easylist/easylist.txt",
+  "https://easylist.to/easylist/easyprivacy.txt",
+  "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.winoffice.txt",
+];
+
+function listName(url: string) {
+  if (url.includes("easylist.txt")) return "EasyList · ads";
+  if (url.includes("easyprivacy.txt")) return "EasyPrivacy · trackers";
+  if (url.includes("native.winoffice.txt")) return "HaGeZi · Windows telemetry";
+  return "Custom source";
+}
 
 interface SettingsProps {
   settings: AppSettings;
@@ -48,16 +62,16 @@ export function Settings({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-[#020806]/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex justify-end bg-[#02010b]/75 backdrop-blur-sm">
       <button
         aria-label="Close settings"
         className="absolute inset-0 cursor-default"
         onClick={onClose}
       />
-      <aside className="relative flex h-full w-full max-w-[560px] flex-col border-l border-white/10 bg-[#091411] shadow-2xl">
+      <aside className="relative flex h-full w-full max-w-[560px] flex-col border-l border-violet-300/15 bg-[#090617] shadow-2xl">
         <header className="flex items-center justify-between border-b border-white/10 px-7 py-6">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-400">
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-violet-300">
               Configuration
             </p>
             <h2 className="mt-1 text-2xl font-semibold text-white">Protection settings</h2>
@@ -74,13 +88,13 @@ export function Settings({
         <div className="flex-1 space-y-8 overflow-y-auto px-7 py-7">
           <section>
             <div className="mb-4 flex items-start gap-3">
-              <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-2.5 text-emerald-400">
+              <div className="rounded-xl border border-violet-400/20 bg-violet-400/10 p-2.5 text-violet-300">
                 <Globe2 size={20} />
               </div>
               <div>
                 <h3 className="font-semibold text-white">Filter lists</h3>
                 <p className="mt-1 text-sm leading-5 text-slate-400">
-                  EasyList and hosts-format sources are compiled locally.
+                  Ads, trackers, telemetry, and custom lists are compiled locally.
                 </p>
               </div>
             </div>
@@ -91,7 +105,10 @@ export function Settings({
                   className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.035] px-4 py-3"
                   key={url}
                 >
-                  <span className="min-w-0 flex-1 truncate text-sm text-slate-300">{url}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-slate-200">{listName(url)}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-slate-600">{url}</p>
+                  </div>
                   <button
                     aria-label={`Remove ${url}`}
                     className="text-slate-500 transition hover:text-rose-400 disabled:cursor-not-allowed disabled:opacity-30"
@@ -111,7 +128,7 @@ export function Settings({
 
             <div className="mt-3 flex gap-2">
               <input
-                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-emerald-400/50"
+                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-violet-400/50"
                 onChange={(event) => setNewList(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") addList();
@@ -126,6 +143,12 @@ export function Settings({
                 <Plus size={18} />
               </button>
             </div>
+            <button
+              className="mt-3 flex items-center gap-2 text-xs font-medium text-violet-300 hover:text-violet-200"
+              onClick={() => setDraft({ ...draft, filterListUrls: RECOMMENDED_LISTS })}
+            >
+              <RotateCcw size={14} /> Restore recommended privacy lists
+            </button>
           </section>
 
           <section>
@@ -199,7 +222,7 @@ export function Settings({
             Update rules
           </button>
           <button
-            className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-bold text-emerald-950 transition hover:bg-emerald-300 disabled:opacity-50"
+            className="flex items-center justify-center gap-2 rounded-xl bg-violet-300 px-4 py-3 text-sm font-bold text-[#160d32] transition hover:bg-violet-200 disabled:opacity-50"
             disabled={saving || updating}
             onClick={() => onSave(draft)}
           >

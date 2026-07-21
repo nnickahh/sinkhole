@@ -1,34 +1,96 @@
-.app-grid {
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.35) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.35) 1px, transparent 1px);
-  background-size: 64px 64px;
+.cosmos {
+  background: #05030f;
 }
 
-.power-orb::before {
-  content: "";
-  position: absolute;
-  inset: -18px;
-  border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+.quick-cosmos {
+  background: linear-gradient(165deg, #0b071d, #030108 72%);
+}
+
+.quick-switch.is-off {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.quick-switch.is-on {
+  border: 1px solid rgba(103, 232, 249, 0.4);
+  background: linear-gradient(90deg, #6d28d9, #0891b2);
+  box-shadow: 0 0 42px rgba(124, 58, 237, 0.42);
+}
+
+.stars {
+  opacity: 0.52;
+  background-image:
+    radial-gradient(circle at 12% 22%, rgba(255, 255, 255, 0.8) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 73% 14%, rgba(196, 181, 253, 0.75) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 84% 72%, rgba(103, 232, 249, 0.6) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 42% 82%, rgba(255, 255, 255, 0.5) 0 1px, transparent 1.5px);
+  background-size: 220px 220px, 310px 310px, 270px 270px, 360px 360px;
+}
+
+.nebula {
+  background:
+    radial-gradient(circle at 18% 50%, rgba(109, 40, 217, 0.19), transparent 32%),
+    radial-gradient(circle at 85% 12%, rgba(8, 145, 178, 0.12), transparent 28%),
+    radial-gradient(circle at 80% 82%, rgba(190, 24, 93, 0.09), transparent 34%);
+}
+
+.cosmic-card {
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.052), rgba(139, 92, 246, 0.025));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(18px);
+}
+
+.brand-orbit {
+  box-shadow: 0 0 42px rgba(139, 92, 246, 0.2);
+}
+
+.event-horizon {
+  isolation: isolate;
+  border: 1px solid rgba(196, 181, 253, 0.18);
+  background: radial-gradient(circle, #020108 42%, rgba(76, 29, 149, 0.7) 48%, transparent 68%);
+}
+
+.event-horizon.is-active {
+  filter: drop-shadow(0 0 45px rgba(124, 58, 237, 0.35));
+}
+
+.event-horizon.is-paused {
+  filter: grayscale(0.8) opacity(0.55);
+}
+
+.accretion-ring {
+  background: conic-gradient(from 35deg, transparent 0 12%, #67e8f9 18%, #8b5cf6 33%, transparent 43% 58%, #f472b6 67%, #7c3aed 78%, transparent 88%);
+  filter: blur(7px);
+  animation: orbit-spin 14s linear infinite;
+}
+
+.black-hole {
+  z-index: 1;
+  background: radial-gradient(circle at 42% 36%, #160d32, #030108 62%);
+  box-shadow: inset 0 0 28px rgba(139, 92, 246, 0.24), 0 0 26px rgba(103, 232, 249, 0.08);
 }
 
 .status-pulse {
-  box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55);
+  box-shadow: 0 0 0 0 rgba(196, 181, 253, 0.55);
   animation: pulse-ring 2s infinite;
 }
 
 @keyframes pulse-ring {
   70% {
-    box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
+    box-shadow: 0 0 0 6px rgba(196, 181, 253, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+    box-shadow: 0 0 0 0 rgba(196, 181, 253, 0);
   }
 }
 
+@keyframes orbit-spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (max-height: 760px) and (min-width: 1024px) {
-  .power-orb {
+  .event-horizon {
     height: 11rem;
     width: 11rem;
   }
