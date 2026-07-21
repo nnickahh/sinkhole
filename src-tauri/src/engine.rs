@@ -110,12 +110,12 @@ impl RuleSet {
                 (false, line)
             };
 
-            if let Some(domain) = parse_adblock_domain(candidate) {
-                if is_exception {
+            if is_exception {
+                if let Some(domain) = parse_adblock_exception_domain(candidate) {
                     rules.allowed_domains.insert(domain);
-                } else {
-                    rules.insert_blocked(domain, category);
                 }
+            } else if let Some(domain) = parse_adblock_domain(candidate) {
+                rules.insert_blocked(domain, category);
             }
         }
 
@@ -209,19 +209,9 @@ pub struct AdblockStats {
 
 impl AdblockEngine {
     pub fn new(enabled: bool, whitelist: &[String]) -> Self {
-        let mut fallback_rules = RuleSet::parse(FALLBACK_AD_RULES, RuleCategory::Ad);
-        fallback_rules.merge(RuleSet::parse(
-            FALLBACK_TRACKER_RULES,
-            RuleCategory::Tracker,
-        ));
-        fallback_rules.merge(RuleSet::parse(
-            FALLBACK_TELEMETRY_RULES,
-            RuleCategory::Telemetry,
-        ));
-
         let engine = Self {
             inner: Arc::new(EngineInner {
-                rules: RwLock::new(fallback_rules),
+                rules: RwLock::new(fallback_rule_set()),
                 user_whitelist: RwLock::new(HashSet::new()),
                 enabled: AtomicBool::new(enabled),
                 blocked_ads: AtomicU64::new(0),
@@ -264,7 +254,7 @@ impl AdblockEngine {
     }
 
     pub fn replace_rules(&self, sources: &[(String, RuleCategory)]) -> usize {
-        let mut combined = RuleSet::default();
+        let mut combined = fallback_rule_set();
         for (source, category) in sources {
             combined.merge(RuleSet::parse(source, *category));
         }
@@ -421,6 +411,25 @@ fn parse_adblock_domain(line: &str) -> Option<String> {
     normalize_domain(&anchored[..end])
 }
 
+fn parse_adblock_exception_domain(line: &str) -> Option<String> {
+    let anchored = line.strip_prefix("||")?;
+    let domain = anchored.strip_suffix('^')?;
+    normalize_domain(domain)
+}
+
+fn fallback_rule_set() -> RuleSet {
+    let mut rules = RuleSet::parse(FALLBACK_AD_RULES, RuleCategory::Ad);
+    rules.merge(RuleSet::parse(
+        FALLBACK_TRACKER_RULES,
+        RuleCategory::Tracker,
+    ));
+    rules.merge(RuleSet::parse(
+        FALLBACK_TELEMETRY_RULES,
+        RuleCategory::Telemetry,
+    ));
+    rules
+}
+
 pub(crate) fn normalize_domain(value: &str) -> Option<String> {
     let mut domain = value
         .trim()
@@ -489,7 +498,7 @@ mod tests {
     #[test]
     fn parses_easylist_hosts_exceptions_and_categories() {
         let mut rules = RuleSet::parse(
-            "! comment\n||ads.example.com^$third-party\n@@||safe.ads.example.com^\n",
+            "! comment\n||ads.example.com^$third-party\n@@||safe.ads.example.com^\n||analytics.example.com^\n@@||analytics.example.com/script.js$domain=site.example\n",
             RuleCategory::Ad,
         );
         rules.merge(RuleSet::parse(
@@ -497,7 +506,7 @@ mod tests {
             RuleCategory::Tracker,
         ));
 
-        assert_eq!(rules.len(), 3);
+        assert_eq!(rules.len(), 4);
         assert_eq!(
             rules.classify_host("cdn.ads.example.com", &HashSet::new()),
             Some(RuleCategory::Tracker)
@@ -509,6 +518,29 @@ mod tests {
         assert_eq!(
             rules.classify_host("tracker.test", &HashSet::new()),
             Some(RuleCategory::Tracker)
+        );
+        assert_eq!(
+            rules.classify_host("analytics.example.com", &HashSet::new()),
+            Some(RuleCategory::Ad)
+        );
+    }
+
+    #[test]
+    fn refreshed_rules_keep_the_privacy_baseline() {
+        let engine = AdblockEngine::new(true, &[]);
+        engine.replace_rules(&[("||custom.example^".to_owned(), RuleCategory::Custom)]);
+
+        assert_eq!(
+            engine.classify_host("ads.doubleclick.net"),
+            Some(RuleCategory::Ad)
+        );
+        assert_eq!(
+            engine.classify_host("google-analytics.com"),
+            Some(RuleCategory::Tracker)
+        );
+        assert_eq!(
+            engine.classify_host("vortex.data.microsoft.com"),
+            Some(RuleCategory::Telemetry)
         );
     }
 
