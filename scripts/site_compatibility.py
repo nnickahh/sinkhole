@@ -66,6 +66,12 @@ def main() -> int:
 
     failures: list[tuple[str, str]] = []
     for site in args.sites:
+        if args.proxy:
+            direct_passed, direct_outcome = load_site(curl, "", site, args.timeout)
+            if not direct_passed:
+                print(f"SKIP {site} (direct connection unavailable: {direct_outcome})")
+                continue
+
         outcome = "not attempted"
         for attempt in range(1, args.attempts + 1):
             passed, outcome = load_site(curl, args.proxy, site, args.timeout)

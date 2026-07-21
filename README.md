@@ -20,7 +20,7 @@ Built for OpenAI Build Week with Tauri v2, Rust, React, TypeScript, and Codex/GP
 
 ## Honest limits
 
-SinkHole is a hostname-level privacy proxy, not a browser extension. It cannot remove empty ad boxes or other page elements after HTML loads, inspect paths inside encrypted HTTPS requests, prevent an application from collecting data locally, or guarantee that every telemetry endpoint appears in a public list. Some browsers and apps can ignore the Windows proxy or use proxy-bypassing transports.
+SinkHole is a hostname-level privacy proxy, not a browser extension. It deliberately ignores path-specific and conditional browser filter rules rather than risk blocking an entire website. It cannot remove empty ad boxes or other page elements after HTML loads, inspect paths inside encrypted HTTPS requests, prevent an application from collecting data locally, or guarantee that every telemetry endpoint appears in a public list. Some browsers and apps can ignore the Windows proxy or use proxy-bypassing transports.
 
 Turning the filter engine on is not the same as connecting traffic. The dashboard reports these states separately and only says traffic was captured after the proxy observes a request.
 

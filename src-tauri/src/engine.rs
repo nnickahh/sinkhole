@@ -476,10 +476,8 @@ fn parse_hosts_line(line: &str) -> Option<String> {
 
 fn parse_adblock_domain(line: &str) -> Option<String> {
     let anchored = line.strip_prefix("||")?;
-    let end = anchored
-        .find(['^', '/', '$', '*', '|'])
-        .unwrap_or(anchored.len());
-    normalize_domain(&anchored[..end])
+    let domain = anchored.strip_suffix('^')?;
+    normalize_domain(domain)
 }
 
 fn parse_adblock_exception_domain(line: &str) -> Option<String> {
@@ -592,6 +590,28 @@ mod tests {
         );
         assert_eq!(
             rules.classify_host("analytics.example.com", &HashSet::new()),
+            Some(RuleCategory::Ad)
+        );
+    }
+
+    #[test]
+    fn path_and_option_rules_are_not_promoted_to_whole_domain_blocks() {
+        let rules = RuleSet::parse(
+            "||adblock-tester.com/banners/$~third-party\n||turtlecute.org/assets/partners/\n||safe-to-block.example^\n||conditional.example^$third-party\n",
+            RuleCategory::Ad,
+        );
+
+        assert_eq!(
+            rules.classify_host("adblock-tester.com", &HashSet::new()),
+            None
+        );
+        assert_eq!(rules.classify_host("turtlecute.org", &HashSet::new()), None);
+        assert_eq!(
+            rules.classify_host("conditional.example", &HashSet::new()),
+            None
+        );
+        assert_eq!(
+            rules.classify_host("safe-to-block.example", &HashSet::new()),
             Some(RuleCategory::Ad)
         );
     }
