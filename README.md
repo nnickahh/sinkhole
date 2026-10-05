@@ -1,63 +1,63 @@
-# SinkHole
+# sinkhole
 
-[![Tauri v2](https://img.shields.io/badge/Tauri-v2-24C8DB?logo=tauri&logoColor=white)](https://v2.tauri.app/)
-[![Rust](https://img.shields.io/badge/Rust-Stable-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-10b981.svg)](LICENSE)
+[![tauri v2](https://img.shields.io/badge/tauri-v2-24C8DB?logo=tauri&logoColor=white)](https://v2.tauri.app/)
+[![rust](https://img.shields.io/badge/rust-stable-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![react](https://img.shields.io/badge/react-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![typescript](https://img.shields.io/badge/typescript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![license: mit](https://img.shields.io/badge/license-mit-10b981.svg)](LICENSE)
 
-**SinkHole** is a cosmic-themed, local-first privacy proxy for Windows. It routes browser traffic through a high-performance Rust loopback proxy and sends known advertising, tracking, and telemetry destinations into an event horizon before they load.
+**sinkhole** is a cosmic-themed, local-first privacy proxy for windows. it routes browser traffic through a high-performance rust loopback proxy and sends known advertising, tracking, and telemetry destinations into an event horizon before they load.
 
-Built with **Tauri v2**, **Rust**, **React**, **TypeScript**, and **Tailwind CSS**.
+built with **tauri v2**, **rust**, **react**, **typescript**, and **tailwind css**.
 
 ---
 
-## System Architecture
+## system architecture
 
 ```mermaid
 flowchart LR
-    Browser["Windows Browser / Apps"] -->|WinINet System Proxy| Proxy["Rust Loopback Proxy (127.0.0.1:8118)"]
-    Proxy --> Engine["Hostname Filter Engine"]
-    Engine -->|Match: EasyList / EasyPrivacy / HaGeZi / Custom| Sink["SinkHole Event Horizon (Blocked / 204)"]
-    Engine -->|Allowed| Upstream["Upstream Destination (HTTP / HTTPS Tunnel)"]
-    Engine -.->|Memory-Only Ring Buffer| UI["React Dashboard & Tray Popover"]
+    Browser["windows browser / apps"] -->|wininet system proxy| Proxy["rust loopback proxy (127.0.0.1:8118)"]
+    Proxy --> Engine["hostname filter engine"]
+    Engine -->|match: easylist / easyprivacy / hagezi / custom| Sink["sinkhole event horizon (blocked / 204)"]
+    Engine -->|allowed| Upstream["upstream destination (http / https tunnel)"]
+    Engine -.->|memory-only ring buffer| UI["react dashboard & tray popover"]
 ```
 
 ---
 
-## Key Features
+## key features
 
-- **One-Click Windows Proxy Integration**: Connects current-user Windows browser traffic automatically and backs up previous proxy settings for clean restoration on disconnect or tray quit.
-- **WARP-Style Tray Popover**: Compact system tray control with a single truthful power switch for both the filter engine and Windows browser routing.
-- **Multi-Source Threat & Telemetry Blocking**:
-  - **EasyList** — blocks known advertising hosts.
-  - **EasyPrivacy** — blocks analytics and tracking hosts.
-  - **HaGeZi Windows/Office Telemetry** — blocks native OS and application telemetry endpoints.
-  - **Custom Rules & Allowlist** — supports user-defined blocked domains and instant domain allowlisting.
-- **Zero-Cert HTTPS Boundary Filtering**: Filters HTTPS `CONNECT` requests at the hostname boundary without installing a root certificate or decrypting traffic.
-- **Memory-Only Activity Log**: Displays recently blocked hostnames and live category counters (Ads, Trackers, Telemetry, Custom) without logging full URLs or request payloads to disk.
-- **Built-in Connection Verification**: Local `http://sinkhole.test` probe confirms that browser traffic is actively routed through the SinkHole proxy.
-
----
-
-## Scope & Design Boundaries
-
-SinkHole is a **hostname-level privacy proxy**, not a browser DOM extension:
-- It deliberately ignores path-specific and conditional browser filter rules rather than risk over-blocking an entire website.
-- It operates at the network hostname boundary and does not perform cosmetic DOM element removal or TLS interception.
-- The dashboard reports **Filter Engine** state and **Browser Traffic Routing** state separately, confirming traffic capture only after the proxy observes live requests.
+- **one-click windows proxy integration**: connects current-user windows browser traffic automatically and backs up previous proxy settings for clean restoration on disconnect or tray quit.
+- **warp-style tray popover**: compact system tray control with a single truthful power switch for both the filter engine and windows browser routing.
+- **multi-source threat & telemetry blocking**:
+  - **easylist** — blocks known advertising hosts.
+  - **easyprivacy** — blocks analytics and tracking hosts.
+  - **hagezi windows/office telemetry** — blocks native os and application telemetry endpoints.
+  - **custom rules & allowlist** — supports user-defined blocked domains and instant domain allowlisting.
+- **zero-cert https boundary filtering**: filters https `CONNECT` requests at the hostname boundary without installing a root certificate or decrypting traffic.
+- **memory-only activity log**: displays recently blocked hostnames and live category counters (ads, trackers, telemetry, custom) without logging full urls or request payloads to disk.
+- **built-in connection verification**: local `http://sinkhole.test` probe confirms that browser traffic is actively routed through the sinkhole proxy.
 
 ---
 
-## Getting Started
+## scope & design boundaries
 
-### Prerequisites (Windows)
-- **Node.js 18+** and **pnpm**
-- **Rust** (stable toolchain)
-- **Microsoft Edge WebView2**
-- **Visual Studio 2022 Build Tools** (with the C++ desktop development workload)
+sinkhole is a **hostname-level privacy proxy**, not a browser dom extension:
+- it deliberately ignores path-specific and conditional browser filter rules rather than risk over-blocking an entire website.
+- it operates at the network hostname boundary and does not perform cosmetic dom element removal or tls interception.
+- the dashboard reports **filter engine** state and **browser traffic routing** state separately, confirming traffic capture only after the proxy observes live requests.
 
-### Installation & Local Development
+---
+
+## getting started
+
+### prerequisites (windows)
+- **node.js 18+** and **pnpm**
+- **rust** (stable toolchain)
+- **microsoft edge webview2**
+- **visual studio 2022 build tools** (with the c++ desktop development workload)
+
+### installation & local development
 
 ```powershell
 git clone https://github.com/nnickahh/sinkhole.git
@@ -66,21 +66,21 @@ pnpm install
 pnpm tauri dev
 ```
 
-### Usage
-1. Click **Connect Windows** in the dashboard (or toggle the switch in the system tray popover).
-2. Open the **connection test** (`http://sinkhole.test`) to verify your browser is routed through SinkHole.
-3. Browse normally and watch **Requests seen** and category counters update in real time.
-4. Click **Disconnect** or **Quit SinkHole** from the tray menu to automatically restore your previous Windows proxy settings.
+### usage
+1. click **connect windows** in the dashboard (or toggle the switch in the system tray popover).
+2. open the **connection test** (`http://sinkhole.test`) to verify your browser is routed through sinkhole.
+3. browse normally and watch **requests seen** and category counters update in real time.
+4. click **disconnect** or **quit sinkhole** from the tray menu to automatically restore your previous windows proxy settings.
 
-> **Manual Proxy Option:** Browsers with independent proxy configurations (such as Firefox) can be pointed directly to `127.0.0.1:8118`.
+> **manual proxy option:** browsers with independent proxy configurations (such as firefox) can be pointed directly to `127.0.0.1:8118`.
 >
-> **Recovery Note:** If SinkHole is force-terminated while connected, open Windows **Settings → Network & internet → Proxy** and toggle **Use a proxy server** off, or simply relaunch SinkHole and disconnect cleanly.
+> **recovery note:** if sinkhole is force-terminated while connected, open windows **settings → network & internet → proxy** and toggle **use a proxy server** off, or simply relaunch sinkhole and disconnect cleanly.
 
 ---
 
-## Verification & Stress Testing
+## verification & stress testing
 
-### Build & Unit Tests
+### build & unit tests
 ```powershell
 pnpm check
 pnpm build
@@ -89,28 +89,27 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml live_default_lists_contain_more_than_one_hundred_thousand_supported_rules -- --ignored
 pnpm tauri build
 ```
-Packaged Windows installers are output under `src-tauri/target/release/bundle/`.
+packaged windows installers are output under `src-tauri/target/release/bundle/`.
 
-### Live Proxy Stress Harness
-With SinkHole running, exercise the proxy against 3,000 concurrent ad, tracker, and telemetry requests:
+### live proxy stress harness
+with sinkhole running, exercise the proxy against 3,000 concurrent ad, tracker, and telemetry requests:
 ```powershell
 python scripts/stress_test.py
 ```
-The harness verifies a `204` sinkhole response across every category before launching the concurrent load phase.
+the harness verifies a `204` sinkhole response across every category before launching the concurrent load phase.
 
-### Site Compatibility Smoke Test
-Verify that standard web destinations resolve cleanly through the proxy:
+### site compatibility smoke test
+verify that standard web destinations resolve cleanly through the proxy:
 ```powershell
 python scripts/site_compatibility.py
 ```
 
 ---
 
-## Author
+## author
 
-**Nick Fong** ([@nnickahh](https://github.com/nnickahh))
+**nick fong** ([@nnickahh](https://github.com/nnickahh))
 
-## License
+## license
 
-MIT — see [LICENSE](LICENSE).
-
+mit — see [LICENSE](LICENSE).
